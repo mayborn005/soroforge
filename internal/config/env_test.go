@@ -357,6 +357,24 @@ func TestLoadEnvReadsRateLimitVariables(t *testing.T) {
 	assert.Equal(t, "true", env.APITrustProxy)
 }
 
+func TestMetricsEnabled(t *testing.T) {
+	got, err := (Env{}).MetricsEnabled()
+	require.NoError(t, err)
+	assert.False(t, got)
+
+	got, err = (Env{APIMetrics: "true"}).MetricsEnabled()
+	require.NoError(t, err)
+	assert.True(t, got)
+
+	_, err = (Env{APIMetrics: "sometimes"}).MetricsEnabled()
+	assert.ErrorContains(t, err, EnvAPIMetrics)
+}
+
+func TestLoadEnvReadsMetricsVariable(t *testing.T) {
+	t.Setenv(EnvAPIMetrics, " true ")
+	assert.Equal(t, "true", LoadEnv().APIMetrics)
+}
+
 func TestLoadEnvReadsScopedAPITokens(t *testing.T) {
 	t.Setenv(EnvAPITokens, " dashboard:read:token , ci:write:secret ")
 	assert.Equal(t, "dashboard:read:token , ci:write:secret", LoadEnv().APITokens)
