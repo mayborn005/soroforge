@@ -4,6 +4,8 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"strconv"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -43,6 +45,10 @@ func IsSQLiteURL(databaseURL string) bool {
 // Migrator applies schema migrations.
 type Migrator struct {
 	m *migrate.Migrate
+
+	// sourceDir is the embedded migration set this database uses, kept so
+	// Latest can report the newest version without a database round trip.
+	sourceDir string
 }
 
 // NewMigrator prepares migrations against the given database URL.
@@ -54,10 +60,7 @@ func NewMigrator(databaseURL string) (*Migrator, error) {
 		return nil, fmt.Errorf("migrate: database URL is required")
 	}
 
-	sourceDir := "migrations/postgres"
-	if IsSQLiteURL(databaseURL) {
-		sourceDir = "migrations/sqlite"
-	}
+	sourceDir := migrationsDir(databaseURL)
 
 	source, err := iofs.New(migrationsFS, sourceDir)
 	if err != nil {
@@ -68,7 +71,7 @@ func NewMigrator(databaseURL string) (*Migrator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("migrate: open database: %w", err)
 	}
-	return &Migrator{m: m}, nil
+	return &Migrator{m: m, sourceDir: sourceDir}, nil
 }
 
 // Up applies all pending migrations. Applying an already-current schema is not
@@ -109,6 +112,51 @@ func (m *Migrator) Version() (version uint, dirty bool, err error) {
 		return 0, false, fmt.Errorf("migrate version: %w", err)
 	}
 	return version, dirty, nil
+}
+
+// Latest reports the newest migration version embedded in this binary for the
+// migrator's dialect. Comparing it with Version tells an operator whether
+// `soroforge migrate up` still has work to do, without applying anything.
+func (m *Migrator) Latest() (uint, error) {
+	return latestVersion(m.sourceDir)
+}
+
+// migrationsDir selects the embedded migration set for a database URL.
+func migrationsDir(databaseURL string) string {
+	if IsSQLiteURL(databaseURL) {
+		return "migrations/sqlite"
+	}
+	return "migrations/postgres"
+}
+
+// latestVersion scans an embedded migration directory for the highest
+// numbered *.up.sql file. golang-migrate names versions by that numeric
+// prefix, so this is the version a fully migrated schema reports.
+func latestVersion(dir string) (uint, error) {
+	entries, err := fs.ReadDir(migrationsFS, dir)
+	if err != nil {
+		return 0, fmt.Errorf("migrate: read embedded migrations: %w", err)
+	}
+	var latest uint64
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		prefix, _, ok := strings.Cut(name, "_")
+		if !ok {
+			continue
+		}
+		version, err := strconv.ParseUint(prefix, 10, 64)
+		if err != nil {
+			continue
+		}
+		latest = max(latest, version)
+	}
+	if latest == 0 {
+		return 0, fmt.Errorf("migrate: no migrations embedded in %s", dir)
+	}
+	return uint(latest), nil
 }
 
 // Close releases the migrator's database handles.

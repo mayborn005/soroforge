@@ -57,3 +57,21 @@ func TestMigratorUpTwiceIsNotAnError(t *testing.T) {
 	assert.NotZero(t, version, "the first Up must have applied migrations")
 	assert.False(t, dirty)
 }
+
+// TestMigratorLatestMatchesAFullyMigratedSchema pins Latest to what Up
+// actually applies, so `soroforge doctor` cannot report a current schema as
+// behind, or a stale one as current.
+func TestMigratorLatestMatchesAFullyMigratedSchema(t *testing.T) {
+	migrator, err := store.NewMigrator(sqliteFileURL(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, migrator.Close()) })
+
+	latest, err := migrator.Latest()
+	require.NoError(t, err)
+	assert.NotZero(t, latest)
+
+	require.NoError(t, migrator.Up())
+	version, _, err := migrator.Version()
+	require.NoError(t, err)
+	assert.Equal(t, version, latest)
+}

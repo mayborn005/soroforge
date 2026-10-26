@@ -239,7 +239,8 @@ cp .env.example .env
 Set `DATABASE_URL`, and a deployer key via either `SOROFORGE_SECRET_KEY` or
 `SOROFORGE_KEYSTORE_PATH`. Check the account with `soroforge whoami`, and top it
 up with `soroforge fund` on networks configured with a Friendbot (the scaffolded
-testnet is). Read the [security notes](#security-notes-on-key-handling) first.
+testnet is). `soroforge doctor` checks all of this — config, WASM, networks,
+database, signer, and funding — in one go. Read the [security notes](#security-notes-on-key-handling) first.
 
 **4. Dry run.** This assembles and simulates both transactions, prints the
 contract address a real deploy would produce, the estimated fee for each
@@ -571,6 +572,7 @@ of an error printed mid-prompt.
 | `init` | Write a starter `soroforge.yaml` for the contracts built under `target/`. |
 | `config show` | Print the resolved configuration (networks, contracts, environment); secrets stay `(set)`/`(unset)`. |
 | `config check` | Check config and WASM files; `--offline` skips RPC checks. |
+| `doctor` | Run every preflight check at once — config, WASM, networks, database and migrations, signer, deployer funding — with a fix per failure. |
 | `deploy <alias>` | Upload WASM, instantiate the contract, record it. `--arg`/`--args-file` override `constructor_args` for this run. |
 | `deploy --all` | Deploy every configured contract not yet tracked on the network, in alias order. |
 | `upgrade <alias>` | Upload new WASM and invoke the contract's upgrade entrypoint. |
@@ -616,6 +618,42 @@ malformed WASM is reported before anything is simulated.
 WebAssembly magic bytes, and that each RPC endpoint reports the configured
 network passphrase. It aggregates failures into one non-zero result. Pass
 `--offline` to skip RPC checks while still validating every artifact.
+
+**`doctor`** runs every preflight check in one pass and prints a checklist,
+so a new environment's problems show up together instead of one failed deploy
+at a time:
+
+| Check | Passes when |
+|---|---|
+| `config` | `soroforge.yaml` loads and validates. |
+| `wasm` | Every contract's WASM file exists and is WebAssembly (same check as `config check`). |
+| `network:<name>` | Each network's RPC answers and serves the configured passphrase (same probe as `networks`). |
+| `database` | `DATABASE_URL` connects and deployment history can be queried (same query as `/ready`). |
+| `migrations` | The schema is at the latest migration this binary ships, and not dirty. |
+| `signer` | A signing key or external signer is configured and loads. |
+| `deployer` | The deployer account exists on `--network` (default: `default_network`). |
+
+```text
+PASS  config           1 network(s) and 1 contract(s) configured
+PASS  wasm             1 WASM artifact(s) present
+PASS  network:testnet  https://soroban-testnet.stellar.org answered at ledger 512345 in 140ms; passphrase matches
+PASS  database         connected and queried deployment history
+FAIL  migrations       schema is at version 8; the latest is 10
+                       fix: run `soroforge migrate up`
+SKIP  signer           no signing key configured
+                       fix: set SOROFORGE_SECRET_KEY or SOROFORGE_KEYSTORE_PATH, or SOROFORGE_SIGNER_COMMAND with SOROFORGE_SIGNER_PUBLIC_KEY
+...
+```
+
+Every check runs even when an earlier one fails; a check that depends on a
+failed one (the deployer check needs a reachable network and a signer) is
+skipped with the reason. A check that needs something not configured — no
+`DATABASE_URL`, no signer — is reported as `skip`, not `fail`, so `doctor`
+works for dry-run-only setups. The exit code is `1` if any check failed and
+`0` otherwise; `--json` emits the checklist (`ok`, counts, and each check's
+`name`, `status`, `detail`, `fix`). `--timeout` (default 5s) bounds each
+network, database, and account probe. Nothing is written: the doctor never
+applies migrations or funds the account, it tells you to.
 
 **`--dry-run`** runs everything up to and including simulation and assembly,
 then stops. It prints the assembled envelopes, the resulting contract address,
@@ -1105,7 +1143,7 @@ internal/config/    soroforge.yaml + env loading, validation, ScVal encoding
 internal/stellar/   RPC client, transaction assembly, signing (all interfaced)
 internal/deploy/    deploy/upgrade/status/extend/restore orchestration
 internal/store/     history: Postgres, SQLite, in-memory + embedded migrations
-internal/netcheck/  concurrent RPC health probes behind `soroforge networks`
+internal/netcheck/  concurrent RPC health probes behind `soroforge networks` and `soroforge doctor`
 internal/api/       chi HTTP handlers mirroring the CLI
 internal/readiness/ database + per-network RPC probes behind GET /ready
 internal/catalog/   best-effort registration with SoroVault after a deploy

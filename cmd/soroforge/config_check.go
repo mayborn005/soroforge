@@ -53,26 +53,7 @@ func checkConfig(
 	offline bool,
 	factory deploy.ClientFactory,
 ) error {
-	var problems []string
-
-	contracts := make([]string, 0, len(cfg.Contracts))
-	for alias := range cfg.Contracts {
-		contracts = append(contracts, alias)
-	}
-	sort.Strings(contracts)
-	for _, alias := range contracts {
-		contract := cfg.Contracts[alias]
-		path := cfg.WasmPath(contract)
-		wasm, err := os.ReadFile(path)
-		if err != nil {
-			problems = append(problems, fmt.Sprintf("contracts.%s.wasm: read %s: %v", alias, path, err))
-			continue
-		}
-		if len(wasm) < len(wasmMagic) || string(wasm[:len(wasmMagic)]) != wasmMagic {
-			problems = append(problems, fmt.Sprintf(
-				"contracts.%s.wasm: %s does not start with the WebAssembly magic bytes", alias, path))
-		}
-	}
+	problems := checkWasmArtifacts(cfg)
 
 	if !offline {
 		if factory == nil {
@@ -116,4 +97,32 @@ func checkConfig(
 		return nil
 	}
 	return errors.New("configuration check failed:\n  - " + strings.Join(problems, "\n  - "))
+}
+
+// checkWasmArtifacts reports every configured contract whose WASM artifact is
+// missing or is not WebAssembly. It is the offline half of checkConfig, shared
+// with `soroforge doctor`, and returns one problem per contract, sorted by
+// alias so the report is stable.
+func checkWasmArtifacts(cfg *config.Config) []string {
+	var problems []string
+
+	contracts := make([]string, 0, len(cfg.Contracts))
+	for alias := range cfg.Contracts {
+		contracts = append(contracts, alias)
+	}
+	sort.Strings(contracts)
+	for _, alias := range contracts {
+		contract := cfg.Contracts[alias]
+		path := cfg.WasmPath(contract)
+		wasm, err := os.ReadFile(path)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("contracts.%s.wasm: read %s: %v", alias, path, err))
+			continue
+		}
+		if len(wasm) < len(wasmMagic) || string(wasm[:len(wasmMagic)]) != wasmMagic {
+			problems = append(problems, fmt.Sprintf(
+				"contracts.%s.wasm: %s does not start with the WebAssembly magic bytes", alias, path))
+		}
+	}
+	return problems
 }
