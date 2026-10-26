@@ -378,6 +378,7 @@ func TestLoadEnvReadsMetricsVariable(t *testing.T) {
 func TestLoadEnvReadsScopedAPITokens(t *testing.T) {
 	t.Setenv(EnvAPITokens, " dashboard:read:token , ci:write:secret ")
 	assert.Equal(t, "dashboard:read:token , ci:write:secret", LoadEnv().APITokens)
+
 }
 
 func TestHasSigningKey(t *testing.T) {
